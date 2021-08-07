@@ -2,6 +2,8 @@
 
 #include "dx_sample_helper.h"
 #include "assets_manager.h"
+#include "quad_model.h"
+#include "cube_model.h"
 
 Scene::Scene(UINT frame_count, UINT width, UINT height) : frame_count_(frame_count),
   view_port_(0.0f, 0.0f, (float)width, (float)height),
@@ -207,6 +209,7 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
   D3D12_INPUT_ELEMENT_DESC input_element_descs[] = {
     {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
   };
   D3D12_INPUT_LAYOUT_DESC input_layout_desc{};
@@ -299,10 +302,17 @@ void Scene::CreateCameraDrawPipelineState(ID3D12Device* device)
 
 void Scene::CreateAssets(ID3D12Device* device)
 {
-  AssetsManager::Vertex* vertices_data;
-  AssetsManager::GetSharedInstance().GetCubeVertexData(&vertices_data);
-  size_t vertex_data_size = AssetsManager::GetSharedInstance().GetCubeVertexDataSize();
+  std::unique_ptr<Asset::Model> quad_model_ptr = std::make_unique<Asset::QuadModel>(Asset::QuadModel());
+  std::unique_ptr<Asset::Model> cube_model_ptr = std::make_unique<Asset::CubeModel>(Asset::CubeModel());
 
+  AssetsManager::GetSharedInstance().InsertModel(std::move(quad_model_ptr));
+  AssetsManager::GetSharedInstance().InsertModel(std::move(cube_model_ptr));
+
+  std::unique_ptr<Asset::Model::Vertex[]> vertices_data = nullptr;
+  std::unique_ptr<DWORD[]> indices_data = nullptr;
+  AssetsManager::GetSharedInstance().GetMergedVerticesAndIndices(vertices_data, indices_data);
+
+  size_t vertex_data_size = AssetsManager::GetSharedInstance().GetTotalModelVertexSize();
   CD3DX12_HEAP_PROPERTIES default_heap_properties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
   CD3DX12_RESOURCE_DESC vertex_buffer_resource_desc = CD3DX12_RESOURCE_DESC::Buffer(vertex_data_size);
   ThrowIfFailed(device->CreateCommittedResource(&default_heap_properties,
@@ -321,18 +331,16 @@ void Scene::CreateAssets(ID3D12Device* device)
     IID_PPV_ARGS(&vertex_upload_heap_)));
 
   D3D12_SUBRESOURCE_DATA vertex_subresource_data{};
-  vertex_subresource_data.pData = vertices_data;
+  vertex_subresource_data.pData = vertices_data.get();
   vertex_subresource_data.RowPitch = vertex_data_size;
   vertex_subresource_data.SlicePitch = vertex_data_size;
   UpdateSubresources(command_list_.Get(), vertex_buffer_.Get(), vertex_upload_heap_.Get(), 0, 0, 1, &vertex_subresource_data);
 
   vertex_buffer_view_.BufferLocation = vertex_buffer_->GetGPUVirtualAddress();
   vertex_buffer_view_.SizeInBytes = static_cast<UINT>(vertex_data_size);
-  vertex_buffer_view_.StrideInBytes = static_cast<UINT>(AssetsManager::GetSharedInstance().GetVertexStride());
+  vertex_buffer_view_.StrideInBytes = static_cast<UINT>(Asset::Model::GetVertexStride());
 
-  DWORD* indices_data = nullptr;
-  AssetsManager::GetSharedInstance().GetCubeIndexData(&indices_data);
-  size_t index_data_size = AssetsManager::GetSharedInstance().GetCubeIndexDataSize();
+  size_t index_data_size = AssetsManager::GetSharedInstance().GetTotalModelIndexSize();
   CD3DX12_RESOURCE_DESC index_buffer_resource_desc = CD3DX12_RESOURCE_DESC::Buffer(index_data_size);
   ThrowIfFailed(device->CreateCommittedResource(&default_heap_properties,
     D3D12_HEAP_FLAG_NONE,
@@ -349,7 +357,7 @@ void Scene::CreateAssets(ID3D12Device* device)
     IID_PPV_ARGS(&index_upload_heap_)));
 
   D3D12_SUBRESOURCE_DATA index_subresource_data{};
-  index_subresource_data.pData = indices_data;
+  index_subresource_data.pData = indices_data.get();
   index_subresource_data.RowPitch = index_data_size;
   index_subresource_data.SlicePitch = index_data_size;
   UpdateSubresources(command_list_.Get(), index_buffer_.Get(), index_upload_heap_.Get(), 0, 0, 1, &index_subresource_data);
@@ -357,9 +365,6 @@ void Scene::CreateAssets(ID3D12Device* device)
   index_buffer_view_.BufferLocation = index_buffer_->GetGPUVirtualAddress();
   index_buffer_view_.SizeInBytes = static_cast<UINT>(index_data_size);
   index_buffer_view_.Format = DXGI_FORMAT_R32_UINT;
-
-  delete[] vertices_data;
-  delete[] indices_data;
 }
 
 void Scene::CreateCameraPoints(ID3D12Device* device)

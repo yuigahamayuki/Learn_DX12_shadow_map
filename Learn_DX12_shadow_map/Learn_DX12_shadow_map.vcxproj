@@ -143,12 +143,15 @@
     <ClInclude Include="assets_manager.h" />
     <ClInclude Include="camera.h" />
     <ClInclude Include="common_headers.h" />
+    <ClInclude Include="cube_model.h" />
     <ClInclude Include="d3dx12.h" />
     <ClInclude Include="directional_light.h" />
     <ClInclude Include="dx_sample.h" />
     <ClInclude Include="dx_sample_helper.h" />
+    <ClInclude Include="model.h" />
     <ClInclude Include="my_engine.h" />
     <ClInclude Include="point_light.h" />
+    <ClInclude Include="quad_model.h" />
     <ClInclude Include="scene.h" />
     <ClInclude Include="spot_light.h" />
     <ClInclude Include="win32_application.h" />
