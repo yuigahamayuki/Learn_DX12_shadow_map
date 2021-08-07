@@ -130,6 +130,10 @@ class CubeModel : public Model {
      return 36;
    }
 
+   const std::string GetTextureImageFileName() const override {
+     return "";
+   }
+
  private:
 
 };

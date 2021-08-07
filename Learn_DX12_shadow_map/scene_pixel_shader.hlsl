@@ -9,8 +9,12 @@ cbuffer SceneConstantBuffer : register(b0)
   int light_type;  // 0: directional light; 1: point light; 2: spot light
 };
 
+Texture2D diffuse_map : register(t0);
+SamplerState simple_sampler : register(s0);
+
 struct PSInput {
 	float4 pos : SV_POSITION;
+  float2 uv : TEXCOORD;
 	float3 color : COLOR;
   float3 world_pos : POSITION;
   float3 world_normal : NORMAL;
@@ -19,7 +23,9 @@ struct PSInput {
 float4 main(PSInput ps_input) : SV_TARGET
 {
   // calculate ambient color
-  float3 ambient_color = 0.05f * ps_input.color;
+  float3 color = ps_input.color;
+  color = diffuse_map.Sample(simple_sampler, ps_input.uv).rgb;
+  float3 ambient_color = 0.05f * color;
 
   // calculate diffuse color
   float3 light_world_direction;
@@ -48,7 +54,7 @@ float4 main(PSInput ps_input) : SV_TARGET
     t *= t;
     diff *= t;
   }
-  float3 diffuse_color = diff * ps_input.color;
+  float3 diffuse_color = diff * color;
 
   // calculate specular color
   float3 view_world_direction = normalize(camera_world_pos.xyz - ps_input.world_pos);

@@ -148,6 +148,7 @@
     <ClInclude Include="directional_light.h" />
     <ClInclude Include="dx_sample.h" />
     <ClInclude Include="dx_sample_helper.h" />
+    <ClInclude Include="image_loader.h" />
     <ClInclude Include="model.h" />
     <ClInclude Include="my_engine.h" />
     <ClInclude Include="point_light.h" />
@@ -161,6 +162,7 @@
     <ClCompile Include="camera.cpp" />
     <ClCompile Include="directional_light.cpp" />
     <ClCompile Include="dx_sample.cpp" />
+    <ClCompile Include="image_loader.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="my_engine.cpp" />
     <ClCompile Include="point_light.cpp" />

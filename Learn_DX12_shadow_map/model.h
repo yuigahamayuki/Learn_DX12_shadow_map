@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 #include "common_headers.h"
 
@@ -36,6 +37,8 @@ class Model {
   virtual size_t GetIndexDataSize() const = 0;
 
   virtual size_t GetIndexNumber() const = 0;
+
+  virtual const std::string GetTextureImageFileName() const = 0;
 
  private:
 

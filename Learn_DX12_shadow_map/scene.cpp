@@ -4,6 +4,7 @@
 #include "assets_manager.h"
 #include "quad_model.h"
 #include "cube_model.h"
+#include "image_loader.h"
 
 Scene::Scene(UINT frame_count, UINT width, UINT height) : frame_count_(frame_count),
   view_port_(0.0f, 0.0f, (float)width, (float)height),
@@ -26,6 +27,7 @@ void Scene::Initialize(ID3D12Device* device, ID3D12CommandQueue* command_queue, 
 
   SetCameras();
 
+  CreateDescriptorHeaps(device);
   CreateScenePipelineState(device);
   CreateAndMapSceneConstantBuffer(device);
 
@@ -38,7 +40,7 @@ void Scene::Initialize(ID3D12Device* device, ID3D12CommandQueue* command_queue, 
  
   ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocators_[current_frame_index_].Get(), pipeline_state_.Get(), IID_PPV_ARGS(&command_list_)));
 
-  CreateAssets(device);
+  LoadAssets(device);
 
   CreateCameraPoints(device);
 
@@ -49,14 +51,6 @@ void Scene::Initialize(ID3D12Device* device, ID3D12CommandQueue* command_queue, 
 
 void Scene::LoadSizeDependentResources(ID3D12Device* device, ComPtr<ID3D12Resource>* render_targets, UINT width, UINT height)
 {
-  D3D12_DESCRIPTOR_HEAP_DESC rtv_descriptor_heap_desc{};
-  rtv_descriptor_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-  rtv_descriptor_heap_desc.NumDescriptors = frame_count_;
-  rtv_descriptor_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-  rtv_descriptor_heap_desc.NodeMask = 0;
-  ThrowIfFailed(device->CreateDescriptorHeap(&rtv_descriptor_heap_desc, IID_PPV_ARGS(&rtv_descriptor_heap_)));
-  rtv_descriptor_increment_size_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
   CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_cpu_descriptor_handle(rtv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
   for (UINT i = 0; i < frame_count_; ++i) {
     render_targets_.emplace_back(render_targets[i]);
@@ -175,6 +169,29 @@ void Scene::CreateConstanfBuffer(ID3D12Device* device, UINT size, ID3D12Resource
 
 }
 
+void Scene::CreateDescriptorHeaps(ID3D12Device* device)
+{
+  // Describe and create a render target view (RTV) descriptor heap.
+  D3D12_DESCRIPTOR_HEAP_DESC rtv_descriptor_heap_desc{};
+  rtv_descriptor_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+  rtv_descriptor_heap_desc.NumDescriptors = frame_count_;
+  rtv_descriptor_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+  rtv_descriptor_heap_desc.NodeMask = 0;
+  ThrowIfFailed(device->CreateDescriptorHeap(&rtv_descriptor_heap_desc, IID_PPV_ARGS(&rtv_descriptor_heap_)));
+  rtv_descriptor_increment_size_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+  // Describe and create a shader resource view (SRV) and constant 
+  // buffer view (CBV) descriptor heap.  
+  // Heap layout: 
+  // 1) object diffuse textures views
+  D3D12_DESCRIPTOR_HEAP_DESC cbvSrvHeapDesc = {};
+  cbvSrvHeapDesc.NumDescriptors = GetCbvSrvUavDescriptorsNumber();
+  cbvSrvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+  cbvSrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  ThrowIfFailed(device->CreateDescriptorHeap(&cbvSrvHeapDesc, IID_PPV_ARGS(&cbv_srv_descriptor_heap_)));
+  cbv_srv_descriptor_increment_size_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+}
+
 void Scene::CreateScenePipelineState(ID3D12Device* device)
 {
   D3D12_FEATURE_DATA_ROOT_SIGNATURE featureData = {};
@@ -187,12 +204,25 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
     featureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
   }
 
-  CD3DX12_ROOT_PARAMETER1 root_parameters[1];
+  CD3DX12_ROOT_PARAMETER1 root_parameters[2]{};
+  // scene constant buffer
   root_parameters[0].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC, D3D12_SHADER_VISIBILITY_ALL);
+  // texture
+  CD3DX12_DESCRIPTOR_RANGE1 ranges[1]{};
+  ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
+  root_parameters[1].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
+
+  // static sampler (Note: there is also dynamic sampler)
+  CD3DX12_STATIC_SAMPLER_DESC static_sampler_desc{};
+  static_sampler_desc.Init(0, D3D12_FILTER_MIN_MAG_MIP_POINT,
+    D3D12_TEXTURE_ADDRESS_MODE_BORDER, D3D12_TEXTURE_ADDRESS_MODE_BORDER, D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+    0.0f, 0, D3D12_COMPARISON_FUNC_NEVER, D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK,
+    0.0f, D3D12_FLOAT32_MAX,
+    D3D12_SHADER_VISIBILITY_PIXEL, 0);
 
   CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_signature_desc;
-  root_signature_desc.Init_1_1(1, root_parameters,
-    0, nullptr,
+  root_signature_desc.Init_1_1(_countof(root_parameters), root_parameters,
+    1, &static_sampler_desc,
     D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
     D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
     D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
@@ -300,7 +330,13 @@ void Scene::CreateCameraDrawPipelineState(ID3D12Device* device)
   ThrowIfFailed(device->CreateGraphicsPipelineState(&pipeline_state_desc, IID_PPV_ARGS(&camera_draw_pipeline_state_)));
 }
 
-void Scene::CreateAssets(ID3D12Device* device)
+void Scene::LoadAssets(ID3D12Device* device)
+{
+  LoadModelVerticesAndIndices(device);
+  LoadTextures(device);
+}
+
+void Scene::LoadModelVerticesAndIndices(ID3D12Device* device)
 {
   std::unique_ptr<Asset::Model> quad_model_ptr = std::make_unique<Asset::QuadModel>(Asset::QuadModel());
   std::unique_ptr<Asset::Model> cube_model_ptr = std::make_unique<Asset::CubeModel>(Asset::CubeModel());
@@ -367,6 +403,77 @@ void Scene::CreateAssets(ID3D12Device* device)
   index_buffer_view_.Format = DXGI_FORMAT_R32_UINT;
 }
 
+void Scene::LoadTextures(ID3D12Device* device)
+{
+  std::vector<std::string> model_textures_file_names;
+  AssetsManager::GetSharedInstance().GetModelTexturesFileNames(model_textures_file_names);
+  model_textures_.resize(model_textures_file_names.size());
+
+  model_textures_upload_heap_.resize(model_textures_file_names.size());
+
+  int texture_index = 0;
+  CD3DX12_CPU_DESCRIPTOR_HANDLE cbv_srv_cpuHandle(cbv_srv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
+  for (const auto& model_texture_file_name : model_textures_file_names) {
+    if (!model_texture_file_name.empty()) {
+      std::vector<uint8_t> texture_image_data;
+      D3D12_RESOURCE_DESC texture_resource_desc{};
+      int bytes_per_row = 0;
+      auto image_size = ImageLoader::LoadImageDataFromFile(texture_image_data, texture_resource_desc, model_texture_file_name, bytes_per_row);
+
+      CD3DX12_HEAP_PROPERTIES default_heap_properties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+      ThrowIfFailed(device->CreateCommittedResource(&default_heap_properties,
+        D3D12_HEAP_FLAG_NONE,
+        &texture_resource_desc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&model_textures_[texture_index])));
+
+      UINT64 texture_upload_buffer_size;
+      // this function gets the size an upload buffer needs to be to upload a texture to the gpu.
+      // each row must be 256 byte aligned except for the last row, which can just be the size in bytes of the row
+      // eg. textureUploadBufferSize = ((((width * numBytesPerPixel) + 255) & ~255) * (height - 1)) + (width * numBytesPerPixel);
+      //textureUploadBufferSize = (((imageBytesPerRow + 255) & ~255) * (textureDesc.Height - 1)) + imageBytesPerRow;
+      device->GetCopyableFootprints(&texture_resource_desc, 0, 1, 0, nullptr, nullptr, nullptr, &texture_upload_buffer_size);
+
+      CD3DX12_HEAP_PROPERTIES upload_heap_properties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+      CD3DX12_RESOURCE_DESC upload_buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(texture_upload_buffer_size);
+      ThrowIfFailed(device->CreateCommittedResource(&upload_heap_properties,
+        D3D12_HEAP_FLAG_NONE,
+        &upload_buffer_desc,
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        IID_PPV_ARGS(&model_textures_upload_heap_[texture_index])));
+
+      // Copy data to the intermediate upload heap and then schedule a copy
+      // from the upload heap to the Texture2D.
+      D3D12_SUBRESOURCE_DATA texture_data = {};
+      texture_data.pData = texture_image_data.data();
+      texture_data.RowPitch = bytes_per_row;
+      texture_data.SlicePitch = image_size;  // size before aligned or aligned size?
+
+      UpdateSubresources(command_list_.Get(), model_textures_[texture_index].Get(), model_textures_upload_heap_[texture_index].Get(), 0, 0, 1, &texture_data);
+
+      // transition the texture default heap to a pixel shader resource (we will be sampling from this heap in the pixel shader to get the color of pixels)
+      CD3DX12_RESOURCE_BARRIER texture_resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(model_textures_[texture_index].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+      command_list_->ResourceBarrier(1, &texture_resource_barrier);
+
+      // Describe and create an SRV.
+      D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+      srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+      srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+      srv_desc.Format = texture_resource_desc.Format;
+      srv_desc.Texture2D.MipLevels = texture_resource_desc.MipLevels;
+      srv_desc.Texture2D.MostDetailedMip = 0;
+      srv_desc.Texture2D.ResourceMinLODClamp = 0.0f;
+      device->CreateShaderResourceView(model_textures_[texture_index].Get(), &srv_desc, cbv_srv_cpuHandle);
+      cbv_srv_cpuHandle.Offset(cbv_srv_descriptor_increment_size_);
+    }
+
+    texture_index++;
+  }
+
+}
+
 void Scene::CreateCameraPoints(ID3D12Device* device)
 {
   CD3DX12_HEAP_PROPERTIES default_heap_properties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
@@ -387,8 +494,6 @@ void Scene::CreateCameraPoints(ID3D12Device* device)
     D3D12_RESOURCE_STATE_GENERIC_READ,
     nullptr,
     IID_PPV_ARGS(&camera_points_vertex_upload_heap_)));
-
-  // TODO: not updatesubresources
 
   camera_points_vertex_buffer_view_.BufferLocation = camera_points_vertex_buffer_->GetGPUVirtualAddress();
   camera_points_vertex_buffer_view_.SizeInBytes = static_cast<UINT>(buffer_size);
@@ -448,6 +553,10 @@ void Scene::PopulateCommandLists()
 {
   ThrowIfFailed(command_allocators_[current_frame_index_]->Reset());
   ThrowIfFailed(command_list_->Reset(command_allocators_[current_frame_index_].Get(), pipeline_state_.Get()));
+  // Set descriptor heaps.
+  ID3D12DescriptorHeap* ppHeaps[] = { cbv_srv_descriptor_heap_.Get() };
+  command_list_->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
   command_list_->SetGraphicsRootSignature(root_signature_.Get());
   command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_view_->GetGPUVirtualAddress());
 
@@ -466,7 +575,17 @@ void Scene::PopulateCommandLists()
 
   command_list_->OMSetRenderTargets(1, &rtv_cpu_descriptor_handle, false, nullptr);
 
-  command_list_->DrawIndexedInstanced(36, 1, 0, 0, 0);
+  std::vector<AssetsManager::DrawArgument> draw_arguments;
+  AssetsManager::GetSharedInstance().GetModelDrawArguments(draw_arguments);
+  const D3D12_GPU_DESCRIPTOR_HANDLE cbv_srv_heap_start = cbv_srv_descriptor_heap_->GetGPUDescriptorHandleForHeapStart();
+  for (const auto& draw_argument : draw_arguments) {
+    if (draw_argument.diffuse_texture_index >= 0) {
+      CD3DX12_GPU_DESCRIPTOR_HANDLE texture_descritptor(cbv_srv_heap_start, draw_argument.diffuse_texture_index, cbv_srv_descriptor_increment_size_);
+      command_list_->SetGraphicsRootDescriptorTable(1, texture_descritptor);
+    }
+
+    command_list_->DrawIndexedInstanced(draw_argument.index_count, 1, draw_argument.index_start, draw_argument.vertex_base, 0);
+  }
 
   DrawCameras();
 
@@ -487,7 +606,7 @@ void Scene::DrawCameras()
   
   UpdateVerticesOfCameraPoints();
   
-  // TODO: slot 0 ok ?
+  // TODO: slot 0 ok ? yes
   command_list_->IASetVertexBuffers(0, 1, &camera_points_vertex_buffer_view_);
   command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
 

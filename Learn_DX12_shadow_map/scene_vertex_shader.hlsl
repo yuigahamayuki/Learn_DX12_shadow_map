@@ -7,12 +7,13 @@ cbuffer SceneConstantBuffer : register(b0)
 
 struct PSInput {
 	float4 pos : SV_POSITION;
+	float2 uv : TEXCOORD;
 	float3 color : COLOR;
 	float3 world_pos : POSITION;
 	float3 world_normal : NORMAL;
 };
 
-PSInput main( float3 pos : POSITION, float3 normal : NORMAL, float3 color : COLOR)
+PSInput main( float3 pos : POSITION, float3 normal : NORMAL, float2 uv : TEXCOORD, float3 color : COLOR)
 {
 	PSInput ps_input;
 	ps_input.pos = float4(pos, 1.0f);
@@ -21,6 +22,7 @@ PSInput main( float3 pos : POSITION, float3 normal : NORMAL, float3 color : COLO
 	ps_input.pos = mul(ps_input.pos, view);
 	ps_input.pos = mul(ps_input.pos, proj);
 	ps_input.color = color;
+	ps_input.uv = uv;
 
 	ps_input.world_normal = normalize(mul(float4(normal, 0.0f), model)).xyz;
 	return ps_input;

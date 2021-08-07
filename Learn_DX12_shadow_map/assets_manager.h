@@ -8,6 +8,13 @@
 
 class AssetsManager {
  public:
+   struct DrawArgument {
+     UINT index_count = 0;
+     UINT index_start = 0;
+     UINT vertex_base = 0;
+     int diffuse_texture_index = -1;
+   };
+
   static AssetsManager& GetSharedInstance();
 
   ~AssetsManager();
@@ -17,6 +24,10 @@ class AssetsManager {
 
   void InsertModel(std::unique_ptr<Asset::Model> model) {
     models_.emplace_back(std::move(model));
+  }
+
+  size_t GetTotolModelNumber() const {
+    return models_.size();
   }
 
   size_t GetTotalModelVertexNumber() const {
@@ -56,6 +67,15 @@ class AssetsManager {
   }
 
   void GetMergedVerticesAndIndices(std::unique_ptr<Asset::Model::Vertex[]>& vertices_data, std::unique_ptr<DWORD[]>& indices_data);
+
+  void GetModelTexturesFileNames(std::vector<std::string>& textures_file_names) const {
+    textures_file_names.clear();
+    std::for_each(models_.cbegin(), models_.cend(), [&textures_file_names](const std::unique_ptr<Asset::Model>& model) {
+      textures_file_names.emplace_back(model->GetTextureImageFileName());
+    });
+  }
+
+  void GetModelDrawArguments(std::vector<DrawArgument>& draw_arguments);
 
  private:
   AssetsManager();

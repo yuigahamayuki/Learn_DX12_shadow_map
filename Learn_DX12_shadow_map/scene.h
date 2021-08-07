@@ -55,16 +55,24 @@ private:
 
   void CreateConstanfBuffer(ID3D12Device* device, UINT size, ID3D12Resource** ppResource, D3D12_RESOURCE_STATES initState);
 
+  void CreateDescriptorHeaps(ID3D12Device* device);
   void CreateScenePipelineState(ID3D12Device* device);
   void CreateAndMapSceneConstantBuffer(ID3D12Device* device);
   void CreateCameraDrawPipelineState(ID3D12Device* device);
-  void CreateAssets(ID3D12Device* device);
+  void LoadAssets(ID3D12Device* device);
+  void LoadModelVerticesAndIndices(ID3D12Device* device);
+  void LoadTextures(ID3D12Device* device);
   void CreateCameraPoints(ID3D12Device* device);
   void UpdateConstantBuffer();
   void CommitConstantBuffer();
   void SetCameras();
   void PopulateCommandLists();
   void DrawCameras();
+
+  UINT GetCbvSrvUavDescriptorsNumber() const {
+    return 1;
+  }
+
   // Update vertices of camera points
   void UpdateVerticesOfCameraPoints();
 
@@ -90,10 +98,14 @@ private:
   ComPtr<ID3D12Resource> camera_points_vertex_buffer_;
   ComPtr<ID3D12Resource> camera_points_vertex_upload_heap_;
   D3D12_VERTEX_BUFFER_VIEW camera_points_vertex_buffer_view_{};
+  std::vector<ComPtr<ID3D12Resource>> model_textures_;
+  std::vector<ComPtr<ID3D12Resource>> model_textures_upload_heap_;
 
   // Heap objects
   ComPtr<ID3D12DescriptorHeap> rtv_descriptor_heap_;
   UINT rtv_descriptor_increment_size_ = 0;
+  ComPtr<ID3D12DescriptorHeap> cbv_srv_descriptor_heap_;
+  UINT cbv_srv_descriptor_increment_size_ = 0;
 
   CD3DX12_VIEWPORT view_port_;
   CD3DX12_RECT scissor_rect_;

@@ -57,6 +57,10 @@ class QuadModel : public Model {
     return 6;
   }
 
+  const std::string GetTextureImageFileName() const override {
+    return "floor_texture.jpeg";
+  }
+
  private:
 
 };  // class QuadModel

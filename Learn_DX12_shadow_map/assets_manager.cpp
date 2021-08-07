@@ -31,6 +31,40 @@ void AssetsManager::GetMergedVerticesAndIndices(std::unique_ptr<Asset::Model::Ve
   });
 }
 
+void AssetsManager::GetModelDrawArguments(std::vector<DrawArgument>& draw_arguments)
+{
+  if (models_.empty()) {
+    return;
+  }
+
+  draw_arguments.clear();
+  draw_arguments.resize(models_.size());
+
+  draw_arguments[0].index_count = static_cast<UINT>(models_[0]->GetIndexNumber());
+  draw_arguments[0].index_start = 0;
+  draw_arguments[0].vertex_base = 0;
+  if (models_[0]->GetTextureImageFileName() != "") {
+    draw_arguments[0].diffuse_texture_index = 0;
+  }
+
+  UINT accumulated_index_start = static_cast<UINT>(models_[0]->GetIndexNumber());
+  UINT accumulated_vertex_base = static_cast<UINT>(models_[0]->GetVertexNumber());
+  UINT accumulated_diffuse_texture_index = 1;
+  for (auto i = 1; i < draw_arguments.size(); ++i) {
+    draw_arguments[i].index_count = static_cast<UINT>(models_[i]->GetIndexNumber());
+    draw_arguments[i].index_start = accumulated_index_start;
+    draw_arguments[i].vertex_base = accumulated_vertex_base;
+
+    accumulated_index_start += static_cast<UINT>(models_[i]->GetIndexNumber());
+    accumulated_vertex_base += static_cast<UINT>(models_[i]->GetVertexNumber());
+
+    if (models_[i]->GetTextureImageFileName() != "") {
+      draw_arguments[i].diffuse_texture_index = accumulated_diffuse_texture_index;
+      accumulated_diffuse_texture_index++;  // Note: may be changed for extra textures, such as normal map
+    }
+  }
+}
+
 AssetsManager::AssetsManager()
 {
 
