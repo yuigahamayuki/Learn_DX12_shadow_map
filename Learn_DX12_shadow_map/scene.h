@@ -70,7 +70,7 @@ private:
   void DrawCameras();
 
   UINT GetCbvSrvUavDescriptorsNumber() const {
-    return 1;
+    return  kDepthBufferCount_ + 1;
   }
 
   // Update vertices of camera points
@@ -79,6 +79,7 @@ private:
   UINT frame_count_ = 0;
   UINT current_frame_index_ = 0;
   static constexpr UINT kTotalCameraCount_ = 4;
+  static constexpr UINT kDepthBufferCount_ = 2;
 
   // D3D objects
   ComPtr<ID3D12RootSignature> root_signature_;
@@ -100,10 +101,12 @@ private:
   D3D12_VERTEX_BUFFER_VIEW camera_points_vertex_buffer_view_{};
   std::vector<ComPtr<ID3D12Resource>> model_textures_;
   std::vector<ComPtr<ID3D12Resource>> model_textures_upload_heap_;
+  std::vector<ComPtr<ID3D12Resource>> depth_textures_;  // 0: shadow depth texture; 1: scene depth texture
 
   // Heap objects
   ComPtr<ID3D12DescriptorHeap> rtv_descriptor_heap_;
   UINT rtv_descriptor_increment_size_ = 0;
+  ComPtr<ID3D12DescriptorHeap> dsv_descriptor_heap_;
   ComPtr<ID3D12DescriptorHeap> cbv_srv_descriptor_heap_;
   UINT cbv_srv_descriptor_increment_size_ = 0;
 

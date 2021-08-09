@@ -6,11 +6,82 @@
 #include "cube_model.h"
 #include "image_loader.h"
 
+namespace {
+
+inline HRESULT CreateDepthStencilTexture2D(
+  ID3D12Device* device,
+  UINT width,
+  UINT height,
+  DXGI_FORMAT typeless_format,
+  DXGI_FORMAT dsv_format,
+  DXGI_FORMAT srv_format,
+  ID3D12Resource** pp_resource,
+  D3D12_CPU_DESCRIPTOR_HANDLE dsv_cpu_descriptor_handle,
+  D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu_descriptor_handle,
+  D3D12_RESOURCE_STATES init_state = D3D12_RESOURCE_STATE_DEPTH_WRITE,
+  float init_depth_value = 1.0f,
+  UINT8 init_stencil_value = 0)
+{
+  try
+  {
+    *pp_resource = nullptr;
+
+    CD3DX12_RESOURCE_DESC depth_texture_desc(
+      D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+      0,
+      width,
+      height,
+      1,
+      1,
+      typeless_format,
+      1,
+      0,
+      D3D12_TEXTURE_LAYOUT_UNKNOWN,
+      D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+
+    CD3DX12_HEAP_PROPERTIES default_heap_properties(D3D12_HEAP_TYPE_DEFAULT);
+    // Performance tip: Tell the runtime at resource creation the desired clear value.
+    CD3DX12_CLEAR_VALUE depth_buffer_clear_value(dsv_format, init_depth_value, init_stencil_value);
+    ThrowIfFailed(device->CreateCommittedResource(
+      &default_heap_properties,
+      D3D12_HEAP_FLAG_NONE,
+      &depth_texture_desc,
+      init_state,
+      &depth_buffer_clear_value,
+      IID_PPV_ARGS(pp_resource)));
+
+    // Create a depth stencil view (DSV).
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc = {};
+    dsv_desc.Format = dsv_format;
+    dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    dsv_desc.Texture2D.MipSlice = 0;
+    device->CreateDepthStencilView(*pp_resource, &dsv_desc, dsv_cpu_descriptor_handle);
+
+    // Create a shader resource view (SRV).
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+    srv_desc.Format = srv_format;
+    srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv_desc.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(*pp_resource, &srv_desc, srv_cpu_descriptor_handle);
+  }
+  catch (HrException& e)
+  {
+    SAFE_RELEASE(*pp_resource);
+    return e.Error();
+  }
+  return S_OK;
+
+}
+
+}  // namespace
+
 Scene::Scene(UINT frame_count, UINT width, UINT height) : frame_count_(frame_count),
   view_port_(0.0f, 0.0f, (float)width, (float)height),
   scissor_rect_(0, 0, width, height)
 {
   cameras_.resize(kTotalCameraCount_);
+  depth_textures_.resize(kDepthBufferCount_);
 }
 
 Scene::~Scene()
@@ -51,11 +122,25 @@ void Scene::Initialize(ID3D12Device* device, ID3D12CommandQueue* command_queue, 
 
 void Scene::LoadSizeDependentResources(ID3D12Device* device, ComPtr<ID3D12Resource>* render_targets, UINT width, UINT height)
 {
+  // Create render target views (RTVs).
   CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_cpu_descriptor_handle(rtv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
   for (UINT i = 0; i < frame_count_; ++i) {
     render_targets_.emplace_back(render_targets[i]);
     device->CreateRenderTargetView(render_targets[i].Get(), nullptr, rtv_cpu_descriptor_handle);
     rtv_cpu_descriptor_handle.Offset(rtv_descriptor_increment_size_);
+  }
+
+  // Create the depth stencil views (DSVs).
+  CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_cpu_descriptor_handle(dsv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
+  const UINT dsv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+  CD3DX12_CPU_DESCRIPTOR_HANDLE depth_srv_descriptor_handle(cbv_srv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
+  // i == 0: shadow; i == 1: scene
+  for (auto i = 0; i < kDepthBufferCount_; ++i) {
+    CreateDepthStencilTexture2D(device, width, height, DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_R32_FLOAT,
+      &depth_textures_[i], dsv_cpu_descriptor_handle, depth_srv_descriptor_handle);
+
+    dsv_cpu_descriptor_handle.Offset(dsv_descriptor_size);
+    depth_srv_descriptor_handle.Offset(cbv_srv_descriptor_increment_size_);
   }
 }
 
@@ -180,15 +265,24 @@ void Scene::CreateDescriptorHeaps(ID3D12Device* device)
   ThrowIfFailed(device->CreateDescriptorHeap(&rtv_descriptor_heap_desc, IID_PPV_ARGS(&rtv_descriptor_heap_)));
   rtv_descriptor_increment_size_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
+  // Describe and create a depth stencil view (DSV) descriptor heap.
+  D3D12_DESCRIPTOR_HEAP_DESC dsv_descriptor_heap_desc{};
+  dsv_descriptor_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+  dsv_descriptor_heap_desc.NumDescriptors = kDepthBufferCount_;
+  dsv_descriptor_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+  dsv_descriptor_heap_desc.NodeMask = 0;
+  ThrowIfFailed(device->CreateDescriptorHeap(&dsv_descriptor_heap_desc, IID_PPV_ARGS(&dsv_descriptor_heap_)));
+
   // Describe and create a shader resource view (SRV) and constant 
   // buffer view (CBV) descriptor heap.  
   // Heap layout: 
-  // 1) object diffuse textures views
-  D3D12_DESCRIPTOR_HEAP_DESC cbvSrvHeapDesc = {};
-  cbvSrvHeapDesc.NumDescriptors = GetCbvSrvUavDescriptorsNumber();
-  cbvSrvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-  cbvSrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-  ThrowIfFailed(device->CreateDescriptorHeap(&cbvSrvHeapDesc, IID_PPV_ARGS(&cbv_srv_descriptor_heap_)));
+  // 1) depth buffer views
+  // 2) object diffuse textures views
+  D3D12_DESCRIPTOR_HEAP_DESC cbv_descriptor_heap_desc = {};
+  cbv_descriptor_heap_desc.NumDescriptors = GetCbvSrvUavDescriptorsNumber();
+  cbv_descriptor_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+  cbv_descriptor_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  ThrowIfFailed(device->CreateDescriptorHeap(&cbv_descriptor_heap_desc, IID_PPV_ARGS(&cbv_srv_descriptor_heap_)));
   cbv_srv_descriptor_increment_size_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 }
 
@@ -413,6 +507,10 @@ void Scene::LoadTextures(ID3D12Device* device)
 
   int texture_index = 0;
   CD3DX12_CPU_DESCRIPTOR_HANDLE cbv_srv_cpuHandle(cbv_srv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
+  // See srv descriptor heap layout
+  for (auto i = 0; i < kDepthBufferCount_; ++i) {
+    cbv_srv_cpuHandle.Offset(cbv_srv_descriptor_increment_size_);
+  }
   for (const auto& model_texture_file_name : model_textures_file_names) {
     if (!model_texture_file_name.empty()) {
       std::vector<uint8_t> texture_image_data;
@@ -580,7 +678,7 @@ void Scene::PopulateCommandLists()
   const D3D12_GPU_DESCRIPTOR_HANDLE cbv_srv_heap_start = cbv_srv_descriptor_heap_->GetGPUDescriptorHandleForHeapStart();
   for (const auto& draw_argument : draw_arguments) {
     if (draw_argument.diffuse_texture_index >= 0) {
-      CD3DX12_GPU_DESCRIPTOR_HANDLE texture_descritptor(cbv_srv_heap_start, draw_argument.diffuse_texture_index, cbv_srv_descriptor_increment_size_);
+      CD3DX12_GPU_DESCRIPTOR_HANDLE texture_descritptor(cbv_srv_heap_start, kDepthBufferCount_ + draw_argument.diffuse_texture_index, cbv_srv_descriptor_increment_size_);
       command_list_->SetGraphicsRootDescriptorTable(1, texture_descritptor);
     }
 
