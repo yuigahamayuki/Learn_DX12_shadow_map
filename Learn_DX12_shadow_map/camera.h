@@ -37,7 +37,7 @@ public:
   void RotateAroundYAxis(float angleRad);
   void RotateYaw(float angleRad);
   void RotatePitch(float angleRad);
-  void GetOrthoProjMatrices(XMFLOAT4X4* view, XMFLOAT4X4* proj, float width, float height);
+  void GetOrthoProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float width, float height);
 
   void UpdateDirections();
 

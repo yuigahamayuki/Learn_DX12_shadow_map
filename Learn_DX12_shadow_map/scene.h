@@ -56,6 +56,10 @@ private:
   void CreateConstanfBuffer(ID3D12Device* device, UINT size, ID3D12Resource** ppResource, D3D12_RESOURCE_STATES initState);
 
   void CreateDescriptorHeaps(ID3D12Device* device);
+  void CreatePipelineStates(ID3D12Device* device);
+  void CreateAndMapConstantBuffers(ID3D12Device* device);
+  void CreateShadowPipelineState(ID3D12Device* device);
+  void CreateAndMapShadowConstantBuffer(ID3D12Device* device);
   void CreateScenePipelineState(ID3D12Device* device);
   void CreateAndMapSceneConstantBuffer(ID3D12Device* device);
   void CreateCameraDrawPipelineState(ID3D12Device* device);
@@ -63,8 +67,8 @@ private:
   void LoadModelVerticesAndIndices(ID3D12Device* device);
   void LoadTextures(ID3D12Device* device);
   void CreateCameraPoints(ID3D12Device* device);
-  void UpdateConstantBuffer();
-  void CommitConstantBuffer();
+  void UpdateConstantBuffers();
+  void CommitConstantBuffers();
   void SetCameras();
   void PopulateCommandLists();
   void DrawCameras();
@@ -82,8 +86,11 @@ private:
   static constexpr UINT kDepthBufferCount_ = 2;
 
   // D3D objects
-  ComPtr<ID3D12RootSignature> root_signature_;
-  ComPtr<ID3D12PipelineState> pipeline_state_;
+  ComPtr<ID3D12RootSignature> shadow_root_signature_;
+  ComPtr<ID3D12PipelineState> shadow_pipeline_state_;
+  ComPtr<ID3D12Resource> shadow_constant_buffer_view_;
+  ComPtr<ID3D12RootSignature> scene_root_signature_;
+  ComPtr<ID3D12PipelineState> scene_pipeline_state_;
   ComPtr<ID3D12Resource> scene_constant_buffer_view_;
   ComPtr<ID3D12RootSignature> camera_draw_root_signature_;
   ComPtr<ID3D12PipelineState> camera_draw_pipeline_state_;
@@ -116,14 +123,17 @@ private:
   InputState keyboard_input_;
 
   std::vector<Camera> cameras_;
+  UINT camera_index_ = 0;  // camera index of current viewing camera
+
+  XMFLOAT4X4 light_view_proj_transform_;
+  void* shadow_constant_buffer_pointer_ = nullptr;
   SceneConstantBuffer scene_constant_buffer_;
   void* scene_constant_buffer_pointer_ = nullptr;
-
-  UINT camera_index_ = 0;  // camera index of current viewing camera
 
   // light related
   DirectionalLight directional_light_;
   PointLight point_light_;
   SpotLight spot_light_;
   LightType light_type_ = LightType::kDirectionLight;
+  Camera light_camera_;  // for shadow mapping
 };

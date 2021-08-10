@@ -99,17 +99,15 @@ void Scene::Initialize(ID3D12Device* device, ID3D12CommandQueue* command_queue, 
   SetCameras();
 
   CreateDescriptorHeaps(device);
-  CreateScenePipelineState(device);
-  CreateAndMapSceneConstantBuffer(device);
-
-  CreateCameraDrawPipelineState(device);
+  CreatePipelineStates(device);
+  CreateAndMapConstantBuffers(device);
 
   command_allocators_.resize(frame_count_);
   for (UINT i = 0; i < frame_count_; ++i) {
     ThrowIfFailed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&command_allocators_[i])));
   }
  
-  ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocators_[current_frame_index_].Get(), pipeline_state_.Get(), IID_PPV_ARGS(&command_list_)));
+  ThrowIfFailed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocators_[current_frame_index_].Get(), scene_pipeline_state_.Get(), IID_PPV_ARGS(&command_list_)));
 
   LoadAssets(device);
 
@@ -136,8 +134,8 @@ void Scene::LoadSizeDependentResources(ID3D12Device* device, ComPtr<ID3D12Resour
   CD3DX12_CPU_DESCRIPTOR_HANDLE depth_srv_descriptor_handle(cbv_srv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
   // i == 0: shadow; i == 1: scene
   for (auto i = 0; i < kDepthBufferCount_; ++i) {
-    CreateDepthStencilTexture2D(device, width, height, DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_R32_FLOAT,
-      &depth_textures_[i], dsv_cpu_descriptor_handle, depth_srv_descriptor_handle);
+    ThrowIfFailed(CreateDepthStencilTexture2D(device, width, height, DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_R32_FLOAT,
+      &depth_textures_[i], dsv_cpu_descriptor_handle, depth_srv_descriptor_handle));
 
     dsv_cpu_descriptor_handle.Offset(dsv_descriptor_size);
     depth_srv_descriptor_handle.Offset(cbv_srv_descriptor_increment_size_);
@@ -161,9 +159,9 @@ void Scene::Update()
     cameras_[i].UpdateDirections();
   }
 
-  UpdateConstantBuffer();
+  UpdateConstantBuffers();
 
-  CommitConstantBuffer();
+  CommitConstantBuffers();
 }
 
 void Scene::Render(ID3D12CommandQueue* command_queue)
@@ -286,6 +284,84 @@ void Scene::CreateDescriptorHeaps(ID3D12Device* device)
   cbv_srv_descriptor_increment_size_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 }
 
+void Scene::CreatePipelineStates(ID3D12Device* device)
+{
+  CreateShadowPipelineState(device);
+  CreateScenePipelineState(device);
+  CreateCameraDrawPipelineState(device);
+}
+
+void Scene::CreateAndMapConstantBuffers(ID3D12Device* device)
+{
+  CreateAndMapShadowConstantBuffer(device);
+  CreateAndMapSceneConstantBuffer(device);
+}
+
+void Scene::CreateShadowPipelineState(ID3D12Device* device)
+{
+  D3D12_FEATURE_DATA_ROOT_SIGNATURE featureData = {};
+  // This is the highest version the sample supports. If CheckFeatureSupport succeeds, the HighestVersion returned will not be greater than this.
+  featureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
+
+  if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &featureData, sizeof(featureData))))
+  {
+    featureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
+  }
+
+  CD3DX12_ROOT_PARAMETER1 root_parameters[1]{};
+  root_parameters[0].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC, D3D12_SHADER_VISIBILITY_VERTEX);
+  CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_signature_desc;
+  root_signature_desc.Init_1_1(_countof(root_parameters), root_parameters,
+    0, nullptr,
+    D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+    D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+    D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+    D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
+    D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS
+  );
+  ComPtr<ID3DBlob> root_signature_blob;
+  ComPtr<ID3DBlob> error;
+  ThrowIfFailed(D3DX12SerializeVersionedRootSignature(&root_signature_desc, featureData.HighestVersion, &root_signature_blob, &error));
+  ThrowIfFailed(device->CreateRootSignature(0, root_signature_blob->GetBufferPointer(), root_signature_blob->GetBufferSize(), IID_PPV_ARGS(&shadow_root_signature_)));
+
+  ComPtr<ID3DBlob> vertex_shader = CompileShader(L"shadow_vertex_shader.hlsl", nullptr, "main", "vs_5_0");
+  ComPtr<ID3DBlob> pixel_shader = CompileShader(L"shadow_pixel_shader.hlsl", nullptr, "main", "ps_5_0");
+
+  D3D12_INPUT_ELEMENT_DESC input_element_descs[] = {
+    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
+  };
+  D3D12_INPUT_LAYOUT_DESC input_layout_desc{};
+  input_layout_desc.pInputElementDescs = input_element_descs;
+  input_layout_desc.NumElements = _countof(input_element_descs);
+
+  D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_state_desc{};
+  pipeline_state_desc.pRootSignature = shadow_root_signature_.Get();
+  pipeline_state_desc.VS = CD3DX12_SHADER_BYTECODE(vertex_shader.Get());
+  pipeline_state_desc.PS = CD3DX12_SHADER_BYTECODE(pixel_shader.Get());
+  pipeline_state_desc.BlendState = CD3DX12_BLEND_DESC(CD3DX12_DEFAULT());
+  pipeline_state_desc.SampleMask = UINT_MAX;
+  pipeline_state_desc.RasterizerState = CD3DX12_RASTERIZER_DESC(CD3DX12_DEFAULT());
+  pipeline_state_desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(CD3DX12_DEFAULT());
+  pipeline_state_desc.InputLayout = input_layout_desc;
+  pipeline_state_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+  pipeline_state_desc.NumRenderTargets = 1;
+  pipeline_state_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+  pipeline_state_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+  pipeline_state_desc.SampleDesc.Count = 1;
+  pipeline_state_desc.NodeMask = 0;
+  ThrowIfFailed(device->CreateGraphicsPipelineState(&pipeline_state_desc, IID_PPV_ARGS(&shadow_pipeline_state_)));
+}
+
+void Scene::CreateAndMapShadowConstantBuffer(ID3D12Device* device)
+{
+  CreateConstanfBuffer(device, sizeof(light_view_proj_transform_), &shadow_constant_buffer_view_, D3D12_RESOURCE_STATE_GENERIC_READ);
+  const CD3DX12_RANGE readRange(0, 0);
+  shadow_constant_buffer_view_->Map(0, &readRange, &shadow_constant_buffer_pointer_);
+}
+
 void Scene::CreateScenePipelineState(ID3D12Device* device)
 {
   D3D12_FEATURE_DATA_ROOT_SIGNATURE featureData = {};
@@ -325,7 +401,7 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
   ComPtr<ID3DBlob> root_signature_blob;
   ComPtr<ID3DBlob> error;
   ThrowIfFailed(D3DX12SerializeVersionedRootSignature(&root_signature_desc, featureData.HighestVersion, &root_signature_blob, &error));
-  ThrowIfFailed(device->CreateRootSignature(0, root_signature_blob->GetBufferPointer(), root_signature_blob->GetBufferSize(), IID_PPV_ARGS(&root_signature_)));
+  ThrowIfFailed(device->CreateRootSignature(0, root_signature_blob->GetBufferPointer(), root_signature_blob->GetBufferSize(), IID_PPV_ARGS(&scene_root_signature_)));
 
   ComPtr<ID3DBlob> vertex_shader = CompileShader(L"scene_vertex_shader.hlsl", nullptr, "main", "vs_5_0");
   ComPtr<ID3DBlob> pixel_shader = CompileShader(L"scene_pixel_shader.hlsl", nullptr, "main", "ps_5_0");
@@ -341,7 +417,7 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
   input_layout_desc.NumElements = _countof(input_element_descs);
 
   D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_state_desc{};
-  pipeline_state_desc.pRootSignature = root_signature_.Get();
+  pipeline_state_desc.pRootSignature = scene_root_signature_.Get();
   pipeline_state_desc.VS = CD3DX12_SHADER_BYTECODE(vertex_shader.Get());
   pipeline_state_desc.PS = CD3DX12_SHADER_BYTECODE(pixel_shader.Get());
   pipeline_state_desc.BlendState = CD3DX12_BLEND_DESC(CD3DX12_DEFAULT());
@@ -354,7 +430,7 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
   pipeline_state_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
   pipeline_state_desc.SampleDesc.Count = 1;
   pipeline_state_desc.NodeMask = 0;
-  ThrowIfFailed(device->CreateGraphicsPipelineState(&pipeline_state_desc, IID_PPV_ARGS(&pipeline_state_)));
+  ThrowIfFailed(device->CreateGraphicsPipelineState(&pipeline_state_desc, IID_PPV_ARGS(&scene_pipeline_state_)));
 }
 
 void Scene::CreateAndMapSceneConstantBuffer(ID3D12Device* device)
@@ -598,7 +674,7 @@ void Scene::CreateCameraPoints(ID3D12Device* device)
   camera_points_vertex_buffer_view_.StrideInBytes = static_cast<UINT>(sizeof(Camera::Vertex));
 }
 
-void Scene::UpdateConstantBuffer()
+void Scene::UpdateConstantBuffers()
 {
   XMStoreFloat4x4(&scene_constant_buffer_.model, XMMatrixIdentity());
   cameras_[camera_index_].Get3DViewProjMatricesLH(&scene_constant_buffer_.view, &scene_constant_buffer_.proj, 90.f, view_port_.Width, view_port_.Height);
@@ -626,11 +702,28 @@ void Scene::UpdateConstantBuffer()
     default:
       break;
   }
+
+  // update shadow mapping related
+  XMVECTOR light_camera_eye = XMLoadFloat4(&scene_constant_buffer_.light_world_direction_or_position);
+  if (light_type_ == LightType::kDirectionLight) {
+    light_camera_eye = XMVectorScale(light_camera_eye, -4.0f);
+  }
+  XMVECTOR light_camera_at = XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f);
+  XMVECTOR light_camera_up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+  light_camera_.Set(light_camera_eye, light_camera_at, light_camera_up);
+  XMFLOAT4X4 light_camera_view;
+  XMFLOAT4X4 light_camera_proj;
+  light_camera_.GetOrthoProjMatricesLH(&light_camera_view, &light_camera_proj, view_port_.Width, view_port_.Height);
+  XMMATRIX light_camera_view_matrix = XMLoadFloat4x4(&light_camera_view);
+  XMMATRIX light_camera_proj_matrix = XMLoadFloat4x4(&light_camera_proj);
+  XMMATRIX light_view_proj_transform_matrix = XMMatrixMultiply(light_camera_view_matrix, light_camera_proj_matrix);
+  XMStoreFloat4x4(&light_view_proj_transform_, light_view_proj_transform_matrix);
 }
 
-void Scene::CommitConstantBuffer()
+void Scene::CommitConstantBuffers()
 {
   memcpy(scene_constant_buffer_pointer_, &scene_constant_buffer_, sizeof(scene_constant_buffer_));
+  memcpy(shadow_constant_buffer_pointer_, &light_view_proj_transform_, sizeof(light_view_proj_transform_));
 }
 
 void Scene::SetCameras()
@@ -650,12 +743,12 @@ void Scene::SetCameras()
 void Scene::PopulateCommandLists()
 {
   ThrowIfFailed(command_allocators_[current_frame_index_]->Reset());
-  ThrowIfFailed(command_list_->Reset(command_allocators_[current_frame_index_].Get(), pipeline_state_.Get()));
+  ThrowIfFailed(command_list_->Reset(command_allocators_[current_frame_index_].Get(), scene_pipeline_state_.Get()));
   // Set descriptor heaps.
   ID3D12DescriptorHeap* ppHeaps[] = { cbv_srv_descriptor_heap_.Get() };
   command_list_->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
 
-  command_list_->SetGraphicsRootSignature(root_signature_.Get());
+  command_list_->SetGraphicsRootSignature(scene_root_signature_.Get());
   command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_view_->GetGPUVirtualAddress());
 
   CD3DX12_RESOURCE_BARRIER resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(render_targets_[current_frame_index_].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);

@@ -75,8 +75,10 @@ void Camera::RotatePitch(float angleRad)
   mUp = XMVector3TransformCoord(mUp, rotation);
 }
 
-void Camera::GetOrthoProjMatrices(XMFLOAT4X4* view, XMFLOAT4X4* proj, float width, float height)
+void Camera::GetOrthoProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float width, float height)
 {
+  XMStoreFloat4x4(view, XMMatrixTranspose(XMMatrixLookAtLH(mEye, mAt, mUp)));
+  XMStoreFloat4x4(proj, XMMatrixTranspose(XMMatrixOrthographicLH(width, height, 0.01f, 10.0f)));
 }
 
 void Camera::UpdateDirections()
