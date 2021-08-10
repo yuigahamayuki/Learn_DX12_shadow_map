@@ -29,15 +29,15 @@ public:
   ~Camera();
 
 
-  void Get3DViewProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fovInDegrees, float screenWidth, float screenHeight);
-  void Get3DViewProjMatrices(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fovInDegrees, float screenWidth, float screenHeight);
+  void Get3DViewProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fovInDegrees, float screenWidth, float screenHeight, float near_plane, float far_plane);
+  void Get3DViewProjMatrices(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fovInDegrees, float screenWidth, float screenHeight, float near_plane, float far_plane);
   void Reset();
   void Set(XMVECTOR eye, XMVECTOR at, XMVECTOR up);
 
   void RotateAroundYAxis(float angleRad);
   void RotateYaw(float angleRad);
   void RotatePitch(float angleRad);
-  void GetOrthoProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float width, float height);
+  void GetOrthoProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float width, float height, float near_plane, float far_plane);
 
   void UpdateDirections();
 

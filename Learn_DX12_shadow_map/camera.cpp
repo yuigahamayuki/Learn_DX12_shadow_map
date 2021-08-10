@@ -9,7 +9,7 @@ Camera::~Camera()
 {
 }
 
-void Camera::Get3DViewProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fovInDegrees, float screenWidth, float screenHeight)
+void Camera::Get3DViewProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fovInDegrees, float screenWidth, float screenHeight, float near_plane, float far_plane)
 {
   float aspectRatio = (float)screenWidth / (float)screenHeight;
   float fovAngleY = fovInDegrees * XM_PI / 180.0f;
@@ -20,10 +20,10 @@ void Camera::Get3DViewProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float f
   }
 
   XMStoreFloat4x4(view, XMMatrixTranspose(XMMatrixLookAtLH(mEye, mAt, mUp)));
-  XMStoreFloat4x4(proj, XMMatrixTranspose(XMMatrixPerspectiveFovLH(fovAngleY, aspectRatio, 0.01f, 10.0f)));
+  XMStoreFloat4x4(proj, XMMatrixTranspose(XMMatrixPerspectiveFovLH(fovAngleY, aspectRatio, near_plane, far_plane)));
 }
 
-void Camera::Get3DViewProjMatrices(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fovInDegrees, float screenWidth, float screenHeight)
+void Camera::Get3DViewProjMatrices(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fovInDegrees, float screenWidth, float screenHeight, float near_plane, float far_plane)
 {
   float aspectRatio = (float)screenWidth / (float)screenHeight;
   float fovAngleY = fovInDegrees * XM_PI / 180.0f;
@@ -34,7 +34,7 @@ void Camera::Get3DViewProjMatrices(XMFLOAT4X4* view, XMFLOAT4X4* proj, float fov
   }
 
   XMStoreFloat4x4(view, XMMatrixTranspose(XMMatrixLookAtRH(mEye, mAt, mUp)));
-  XMStoreFloat4x4(proj, XMMatrixTranspose(XMMatrixPerspectiveFovRH(fovAngleY, aspectRatio, 0.01f, 10.0f)));
+  XMStoreFloat4x4(proj, XMMatrixTranspose(XMMatrixPerspectiveFovRH(fovAngleY, aspectRatio, near_plane, far_plane)));
 }
 
 void Camera::Reset()
@@ -75,10 +75,10 @@ void Camera::RotatePitch(float angleRad)
   mUp = XMVector3TransformCoord(mUp, rotation);
 }
 
-void Camera::GetOrthoProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float width, float height)
+void Camera::GetOrthoProjMatricesLH(XMFLOAT4X4* view, XMFLOAT4X4* proj, float width, float height, float near_plane, float far_plane)
 {
   XMStoreFloat4x4(view, XMMatrixTranspose(XMMatrixLookAtLH(mEye, mAt, mUp)));
-  XMStoreFloat4x4(proj, XMMatrixTranspose(XMMatrixOrthographicLH(width, height, 0.01f, 10.0f)));
+  XMStoreFloat4x4(proj, XMMatrixTranspose(XMMatrixOrthographicLH(width, height, near_plane, far_plane)));
 }
 
 void Camera::UpdateDirections()

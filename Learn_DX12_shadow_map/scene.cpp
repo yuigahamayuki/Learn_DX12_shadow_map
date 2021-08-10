@@ -130,14 +130,14 @@ void Scene::LoadSizeDependentResources(ID3D12Device* device, ComPtr<ID3D12Resour
 
   // Create the depth stencil views (DSVs).
   CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_cpu_descriptor_handle(dsv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
-  const UINT dsv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+  dsv_descriptor_size_ = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
   CD3DX12_CPU_DESCRIPTOR_HANDLE depth_srv_descriptor_handle(cbv_srv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
   // i == 0: shadow; i == 1: scene
   for (auto i = 0; i < kDepthBufferCount_; ++i) {
     ThrowIfFailed(CreateDepthStencilTexture2D(device, width, height, DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_R32_FLOAT,
       &depth_textures_[i], dsv_cpu_descriptor_handle, depth_srv_descriptor_handle));
 
-    dsv_cpu_descriptor_handle.Offset(dsv_descriptor_size);
+    dsv_cpu_descriptor_handle.Offset(dsv_descriptor_size_);
     depth_srv_descriptor_handle.Offset(cbv_srv_descriptor_increment_size_);
   }
 }
@@ -340,7 +340,7 @@ void Scene::CreateShadowPipelineState(ID3D12Device* device)
   D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_state_desc{};
   pipeline_state_desc.pRootSignature = shadow_root_signature_.Get();
   pipeline_state_desc.VS = CD3DX12_SHADER_BYTECODE(vertex_shader.Get());
-  pipeline_state_desc.PS = CD3DX12_SHADER_BYTECODE(pixel_shader.Get());
+  //pipeline_state_desc.PS = CD3DX12_SHADER_BYTECODE(pixel_shader.Get());
   pipeline_state_desc.BlendState = CD3DX12_BLEND_DESC(CD3DX12_DEFAULT());
   pipeline_state_desc.SampleMask = UINT_MAX;
   pipeline_state_desc.RasterizerState = CD3DX12_RASTERIZER_DESC(CD3DX12_DEFAULT());
@@ -677,7 +677,7 @@ void Scene::CreateCameraPoints(ID3D12Device* device)
 void Scene::UpdateConstantBuffers()
 {
   XMStoreFloat4x4(&scene_constant_buffer_.model, XMMatrixIdentity());
-  cameras_[camera_index_].Get3DViewProjMatricesLH(&scene_constant_buffer_.view, &scene_constant_buffer_.proj, 90.f, view_port_.Width, view_port_.Height);
+  cameras_[camera_index_].Get3DViewProjMatricesLH(&scene_constant_buffer_.view, &scene_constant_buffer_.proj, 90.f, view_port_.Width, view_port_.Height, 0.01f, 10.0f);
 
   // update light related
   XMStoreFloat4(&scene_constant_buffer_.camera_world_pos, cameras_[camera_index_].mEye);
@@ -713,7 +713,8 @@ void Scene::UpdateConstantBuffers()
   light_camera_.Set(light_camera_eye, light_camera_at, light_camera_up);
   XMFLOAT4X4 light_camera_view;
   XMFLOAT4X4 light_camera_proj;
-  light_camera_.GetOrthoProjMatricesLH(&light_camera_view, &light_camera_proj, view_port_.Width, view_port_.Height);
+  //light_camera_.GetOrthoProjMatricesLH(&light_camera_view, &light_camera_proj, view_port_.Width, view_port_.Height);
+  light_camera_.Get3DViewProjMatricesLH(&light_camera_view, &light_camera_proj, 90.0f, view_port_.Width, view_port_.Height, 0.01f, 10.0f);
   XMMATRIX light_camera_view_matrix = XMLoadFloat4x4(&light_camera_view);
   XMMATRIX light_camera_proj_matrix = XMLoadFloat4x4(&light_camera_proj);
   XMMATRIX light_view_proj_transform_matrix = XMMatrixMultiply(light_camera_view_matrix, light_camera_proj_matrix);
@@ -743,7 +744,53 @@ void Scene::SetCameras()
 void Scene::PopulateCommandLists()
 {
   ThrowIfFailed(command_allocators_[current_frame_index_]->Reset());
-  ThrowIfFailed(command_list_->Reset(command_allocators_[current_frame_index_].Get(), scene_pipeline_state_.Get()));
+  ThrowIfFailed(command_list_->Reset(command_allocators_[current_frame_index_].Get(), nullptr));
+  CD3DX12_RESOURCE_BARRIER resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(render_targets_[current_frame_index_].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+  command_list_->ResourceBarrier(1, &resource_barrier);
+
+  ShadowPass();
+  ScenePass();
+  DrawCameras();
+
+  resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(render_targets_[current_frame_index_].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+  command_list_->ResourceBarrier(1, &resource_barrier);
+
+
+
+  ThrowIfFailed(command_list_->Close());
+}
+
+void Scene::ShadowPass()
+{
+  command_list_->SetPipelineState(shadow_pipeline_state_.Get());
+  command_list_->SetGraphicsRootSignature(shadow_root_signature_.Get());
+  command_list_->SetGraphicsRootConstantBufferView(0, shadow_constant_buffer_view_->GetGPUVirtualAddress());
+
+  CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_cpu_descriptor_handle(dsv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
+  command_list_->ClearDepthStencilView(dsv_cpu_descriptor_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+  dsv_cpu_descriptor_handle.Offset(dsv_descriptor_size_);
+  command_list_->ClearDepthStencilView(dsv_cpu_descriptor_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+  command_list_->IASetVertexBuffers(0, 1, &vertex_buffer_view_);
+  command_list_->IASetIndexBuffer(&index_buffer_view_);
+  command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+  command_list_->RSSetViewports(1, &view_port_);
+  command_list_->RSSetScissorRects(1, &scissor_rect_);
+
+  dsv_cpu_descriptor_handle = dsv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart();
+  command_list_->OMSetRenderTargets(0, nullptr, false, &dsv_cpu_descriptor_handle);
+
+  std::vector<AssetsManager::DrawArgument> draw_arguments;
+  AssetsManager::GetSharedInstance().GetModelDrawArguments(draw_arguments);
+  for (const auto& draw_argument : draw_arguments) {
+    command_list_->DrawIndexedInstanced(draw_argument.index_count, 1, draw_argument.index_start, draw_argument.vertex_base, 0);
+  }
+}
+
+void Scene::ScenePass()
+{
+  command_list_->SetPipelineState(scene_pipeline_state_.Get());
   // Set descriptor heaps.
   ID3D12DescriptorHeap* ppHeaps[] = { cbv_srv_descriptor_heap_.Get() };
   command_list_->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
@@ -751,8 +798,7 @@ void Scene::PopulateCommandLists()
   command_list_->SetGraphicsRootSignature(scene_root_signature_.Get());
   command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_view_->GetGPUVirtualAddress());
 
-  CD3DX12_RESOURCE_BARRIER resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(render_targets_[current_frame_index_].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-  command_list_->ResourceBarrier(1, &resource_barrier);
+
   CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_cpu_descriptor_handle(rtv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart(), current_frame_index_, rtv_descriptor_increment_size_);
   const FLOAT clear_color[] = { 0.0f, 0.0f, 0.0f, 1.0f };
   command_list_->ClearRenderTargetView(rtv_cpu_descriptor_handle, clear_color, 0, nullptr);
@@ -777,15 +823,6 @@ void Scene::PopulateCommandLists()
 
     command_list_->DrawIndexedInstanced(draw_argument.index_count, 1, draw_argument.index_start, draw_argument.vertex_base, 0);
   }
-
-  DrawCameras();
-
-  resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(render_targets_[current_frame_index_].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-  command_list_->ResourceBarrier(1, &resource_barrier);
-
-
-
-  ThrowIfFailed(command_list_->Close());
 }
 
 void Scene::DrawCameras()

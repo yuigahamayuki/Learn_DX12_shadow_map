@@ -71,6 +71,8 @@ private:
   void CommitConstantBuffers();
   void SetCameras();
   void PopulateCommandLists();
+  void ShadowPass();
+  void ScenePass();
   void DrawCameras();
 
   UINT GetCbvSrvUavDescriptorsNumber() const {
@@ -114,6 +116,7 @@ private:
   ComPtr<ID3D12DescriptorHeap> rtv_descriptor_heap_;
   UINT rtv_descriptor_increment_size_ = 0;
   ComPtr<ID3D12DescriptorHeap> dsv_descriptor_heap_;
+  UINT dsv_descriptor_size_ = 0;
   ComPtr<ID3D12DescriptorHeap> cbv_srv_descriptor_heap_;
   UINT cbv_srv_descriptor_increment_size_ = 0;
 
