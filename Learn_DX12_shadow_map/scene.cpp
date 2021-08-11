@@ -710,14 +710,20 @@ void Scene::UpdateConstantBuffers()
   }
   XMVECTOR light_camera_at = XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f);
   XMVECTOR light_camera_up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+  // Note: up vector cannot be parallel to looking vector, it's OK that they have a small angle.
+  if (light_type_ == LightType::kSpotLight) {
+    // light_camera_up = XMVectorSet(0.0f, 0.99f, 0.141f, 0.0f); // it's also ok
+    light_camera_up = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+  }
   light_camera_.Set(light_camera_eye, light_camera_at, light_camera_up);
   XMFLOAT4X4 light_camera_view;
   XMFLOAT4X4 light_camera_proj;
-  //light_camera_.GetOrthoProjMatricesLH(&light_camera_view, &light_camera_proj, view_port_.Width, view_port_.Height);
-  light_camera_.Get3DViewProjMatricesLH(&light_camera_view, &light_camera_proj, 90.0f, view_port_.Width, view_port_.Height, 0.01f, 10.0f);
+  // light_camera_.GetOrthoProjMatricesLH(&light_camera_view, &light_camera_proj, view_port_.Width, view_port_.Height, 0.01f, 10.0f);  // TOOD: explore why not work
+  light_camera_.Get3DViewProjMatricesLH(&light_camera_view, &light_camera_proj, 90.0f, view_port_.Width, view_port_.Height, 0.01f, 10.0f);  // TODO: explore why spotlight not work
   XMMATRIX light_camera_view_matrix = XMLoadFloat4x4(&light_camera_view);
   XMMATRIX light_camera_proj_matrix = XMLoadFloat4x4(&light_camera_proj);
-  XMMATRIX light_view_proj_transform_matrix = XMMatrixMultiply(light_camera_view_matrix, light_camera_proj_matrix);
+  // XMMATRIX light_view_proj_transform_matrix = XMMatrixMultiply(light_camera_view_matrix, light_camera_proj_matrix);  // Note: wrong
+  XMMATRIX light_view_proj_transform_matrix = XMMatrixMultiply(light_camera_proj_matrix, light_camera_view_matrix);
   XMStoreFloat4x4(&light_view_proj_transform_, light_view_proj_transform_matrix);
 }
 
