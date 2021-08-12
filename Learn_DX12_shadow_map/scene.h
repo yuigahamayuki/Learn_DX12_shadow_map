@@ -76,7 +76,7 @@ private:
   void DrawCameras();
 
   UINT GetCbvSrvUavDescriptorsNumber() const {
-    return  kDepthBufferCount_ + 1;
+    return  kDepthBufferCount_ + 1;  // 1 means the number of diffuse textures is 1.
   }
 
   // Update vertices of camera points

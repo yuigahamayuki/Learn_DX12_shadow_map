@@ -139,6 +139,7 @@ void Scene::LoadSizeDependentResources(ID3D12Device* device, ComPtr<ID3D12Resour
 
     dsv_cpu_descriptor_handle.Offset(dsv_descriptor_size_);
     depth_srv_descriptor_handle.Offset(cbv_srv_descriptor_increment_size_);
+    NAME_D3D12_OBJECT_INDEXED(depth_textures_, i);
   }
 }
 
@@ -374,13 +375,18 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
     featureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
   }
 
-  CD3DX12_ROOT_PARAMETER1 root_parameters[2]{};
-  // scene constant buffer
-  root_parameters[0].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC, D3D12_SHADER_VISIBILITY_ALL);
   // texture
-  CD3DX12_DESCRIPTOR_RANGE1 ranges[1]{};
+  CD3DX12_DESCRIPTOR_RANGE1 ranges[3]{};
+  // object diffuse texture
   ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
-  root_parameters[1].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
+  // shadow map
+  ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 0);
+  // Performance tip: Order root parameters from most frequently accessed to least frequently accessed.
+  CD3DX12_ROOT_PARAMETER1 root_parameters[3]{};
+  // scene constant buffer
+  root_parameters[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);  // 1 frequently changed diffuse textures - starting in register t0. Per object part.
+  root_parameters[1].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC, D3D12_SHADER_VISIBILITY_ALL);  // 1 frequently changed constant buffer. Per object.
+  root_parameters[2].InitAsDescriptorTable(1, &ranges[1], D3D12_SHADER_VISIBILITY_PIXEL);  // 1 infrequently changed shadow texture - starting in register t1.
 
   // static sampler (Note: there is also dynamic sampler)
   CD3DX12_STATIC_SAMPLER_DESC static_sampler_desc{};
@@ -428,6 +434,7 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
   pipeline_state_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
   pipeline_state_desc.NumRenderTargets = 1;
   pipeline_state_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+  pipeline_state_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
   pipeline_state_desc.SampleDesc.Count = 1;
   pipeline_state_desc.NodeMask = 0;
   ThrowIfFailed(device->CreateGraphicsPipelineState(&pipeline_state_desc, IID_PPV_ARGS(&scene_pipeline_state_)));
@@ -755,11 +762,17 @@ void Scene::PopulateCommandLists()
   command_list_->ResourceBarrier(1, &resource_barrier);
 
   ShadowPass();
+
+  CD3DX12_RESOURCE_BARRIER depth_resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(depth_textures_[0].Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+  command_list_->ResourceBarrier(1, &depth_resource_barrier);
+
   ScenePass();
   DrawCameras();
 
   resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(render_targets_[current_frame_index_].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-  command_list_->ResourceBarrier(1, &resource_barrier);
+  depth_resource_barrier = CD3DX12_RESOURCE_BARRIER::Transition(depth_textures_[0].Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+  D3D12_RESOURCE_BARRIER resource_barriers[]{ resource_barrier, depth_resource_barrier };
+  command_list_->ResourceBarrier(2, resource_barriers);
 
 
 
@@ -802,7 +815,7 @@ void Scene::ScenePass()
   command_list_->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
 
   command_list_->SetGraphicsRootSignature(scene_root_signature_.Get());
-  command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_view_->GetGPUVirtualAddress());
+  command_list_->SetGraphicsRootConstantBufferView(1, scene_constant_buffer_view_->GetGPUVirtualAddress());
 
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_cpu_descriptor_handle(rtv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart(), current_frame_index_, rtv_descriptor_increment_size_);
@@ -816,15 +829,18 @@ void Scene::ScenePass()
   command_list_->RSSetViewports(1, &view_port_);
   command_list_->RSSetScissorRects(1, &scissor_rect_);
 
-  command_list_->OMSetRenderTargets(1, &rtv_cpu_descriptor_handle, false, nullptr);
+  // 1: scene depth texture (0: shadow depth texture)
+  CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_cpu_descriptor_handle(dsv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart(), 1, dsv_descriptor_size_);
+  command_list_->OMSetRenderTargets(1, &rtv_cpu_descriptor_handle, false, &dsv_cpu_descriptor_handle);
 
   std::vector<AssetsManager::DrawArgument> draw_arguments;
   AssetsManager::GetSharedInstance().GetModelDrawArguments(draw_arguments);
   const D3D12_GPU_DESCRIPTOR_HANDLE cbv_srv_heap_start = cbv_srv_descriptor_heap_->GetGPUDescriptorHandleForHeapStart();
+  command_list_->SetGraphicsRootDescriptorTable(2, cbv_srv_heap_start);
   for (const auto& draw_argument : draw_arguments) {
     if (draw_argument.diffuse_texture_index >= 0) {
       CD3DX12_GPU_DESCRIPTOR_HANDLE texture_descritptor(cbv_srv_heap_start, kDepthBufferCount_ + draw_argument.diffuse_texture_index, cbv_srv_descriptor_increment_size_);
-      command_list_->SetGraphicsRootDescriptorTable(1, texture_descritptor);
+      command_list_->SetGraphicsRootDescriptorTable(0, texture_descritptor);
     }
 
     command_list_->DrawIndexedInstanced(draw_argument.index_count, 1, draw_argument.index_start, draw_argument.vertex_base, 0);
@@ -844,6 +860,8 @@ void Scene::DrawCameras()
   command_list_->IASetVertexBuffers(0, 1, &camera_points_vertex_buffer_view_);
   command_list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
 
+  CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_cpu_descriptor_handle(rtv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart(), current_frame_index_, rtv_descriptor_increment_size_);
+  command_list_->OMSetRenderTargets(1, &rtv_cpu_descriptor_handle, false, nullptr);
   command_list_->DrawInstanced(kTotalCameraCount_ - 1, 1, 0, 0);
 }
 

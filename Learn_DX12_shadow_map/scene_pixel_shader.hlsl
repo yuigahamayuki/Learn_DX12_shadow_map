@@ -10,6 +10,7 @@ cbuffer SceneConstantBuffer : register(b0)
 };
 
 Texture2D diffuse_map : register(t0);
+Texture2D shadow_map : register(t1);
 SamplerState simple_sampler : register(s0);
 
 struct PSInput {
