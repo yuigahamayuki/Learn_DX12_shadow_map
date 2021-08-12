@@ -46,6 +46,7 @@ void AssetsManager::GetModelDrawArguments(std::vector<DrawArgument>& draw_argume
   if (models_[0]->GetTextureImageFileName() != "") {
     draw_arguments[0].diffuse_texture_index = 0;
   }
+  draw_arguments[0].model_transform = models_[0]->GetModelTransform();
 
   UINT accumulated_index_start = static_cast<UINT>(models_[0]->GetIndexNumber());
   UINT accumulated_vertex_base = static_cast<UINT>(models_[0]->GetVertexNumber());
@@ -62,6 +63,8 @@ void AssetsManager::GetModelDrawArguments(std::vector<DrawArgument>& draw_argume
       draw_arguments[i].diffuse_texture_index = accumulated_diffuse_texture_index;
       accumulated_diffuse_texture_index++;  // Note: may be changed for extra textures, such as normal map
     }
+
+    draw_arguments[i].model_transform = models_[i]->GetModelTransform();
   }
 }
 

@@ -69,7 +69,8 @@ private:
   void LoadTextures(ID3D12Device* device);
   void CreateCameraPoints(ID3D12Device* device);
   void UpdateConstantBuffers();
-  void CommitConstantBuffers();
+  void CommitConstantBuffers(UINT object_index);
+  void CommitConstantBuffersForAllObjects();
   void SetCameras();
   void PopulateCommandLists();
   void ShadowPass();
@@ -93,7 +94,7 @@ private:
   ComPtr<ID3D12PipelineState> shadow_pipeline_state_;
   ComPtr<ID3D12RootSignature> scene_root_signature_;
   ComPtr<ID3D12PipelineState> scene_pipeline_state_;
-  ComPtr<ID3D12Resource> scene_constant_buffer_view_;
+  std::vector<ComPtr<ID3D12Resource>> scene_constant_buffer_views_;  // each frame has its own constant buffer view
   ComPtr<ID3D12RootSignature> camera_draw_root_signature_;
   ComPtr<ID3D12PipelineState> camera_draw_pipeline_state_;
   std::vector<ComPtr<ID3D12CommandAllocator>> command_allocators_;
@@ -129,7 +130,8 @@ private:
   UINT camera_index_ = 0;  // camera index of current viewing camera
 
   SceneConstantBuffer scene_constant_buffer_;
-  void* scene_constant_buffer_pointer_ = nullptr;
+  std::vector<void*> scene_constant_buffer_pointers_;
+  UINT scene_constant_buffer_aligned_size_ = 0;
 
   // light related
   DirectionalLight directional_light_;

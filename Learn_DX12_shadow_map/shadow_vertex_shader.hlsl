@@ -10,7 +10,8 @@ cbuffer SceneConstantBuffer : register(b0)
   int light_type;  // 0: directional light; 1: point light; 2: spot light
 };
 
-float4 main( float3 pos : POSITION ) : SV_POSITION
+float4 main(float3 pos : POSITION) : SV_POSITION
 {
-	return mul(float4(pos, 1.0f), light_view_proj_transform);
+  float4 world_pos = mul(float4(pos, 1.0f), model);
+	return mul(world_pos, light_view_proj_transform);
 }

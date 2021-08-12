@@ -161,8 +161,7 @@ void Scene::Update()
   }
 
   UpdateConstantBuffers();
-
-  CommitConstantBuffers();
+  CommitConstantBuffersForAllObjects();
 }
 
 void Scene::Render(ID3D12CommandQueue* command_queue)
@@ -242,7 +241,7 @@ void Scene::CreateConstanfBuffer(ID3D12Device* device, UINT size, ID3D12Resource
 
   const UINT alignedSize = CalculateConstantBufferByteSize(size);
   auto upload_heap_properties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-  auto constant_buffer_resource_desc = CD3DX12_RESOURCE_DESC::Buffer(alignedSize);
+  auto constant_buffer_resource_desc = CD3DX12_RESOURCE_DESC::Buffer(alignedSize * 2);  // TODO: replace 2 with variable
   ThrowIfFailed(device->CreateCommittedResource(
     &upload_heap_properties,
     D3D12_HEAP_FLAG_NONE,
@@ -440,9 +439,16 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
 
 void Scene::CreateAndMapSceneConstantBuffer(ID3D12Device* device)
 {
-  CreateConstanfBuffer(device, sizeof(SceneConstantBuffer), &scene_constant_buffer_view_, D3D12_RESOURCE_STATE_GENERIC_READ);
-  const CD3DX12_RANGE readRange(0, 0);
-  scene_constant_buffer_view_->Map(0, &readRange, &scene_constant_buffer_pointer_);
+  scene_constant_buffer_views_.clear();
+  scene_constant_buffer_views_.resize(frame_count_);
+  scene_constant_buffer_pointers_.clear();
+  scene_constant_buffer_pointers_.resize(frame_count_);
+  scene_constant_buffer_aligned_size_ = CalculateConstantBufferByteSize(sizeof(SceneConstantBuffer));
+  for (auto i = 0; i < frame_count_; ++i) {
+    CreateConstanfBuffer(device, sizeof(SceneConstantBuffer), &(scene_constant_buffer_views_[i]), D3D12_RESOURCE_STATE_GENERIC_READ);
+    const CD3DX12_RANGE readRange(0, 0);
+    scene_constant_buffer_views_[i]->Map(0, &readRange, &(scene_constant_buffer_pointers_[i]));
+  }
 }
 
 void Scene::CreateCameraDrawPipelineState(ID3D12Device* device)
@@ -515,6 +521,10 @@ void Scene::LoadModelVerticesAndIndices(ID3D12Device* device)
 {
   std::unique_ptr<Asset::Model> quad_model_ptr = std::make_unique<Asset::QuadModel>(Asset::QuadModel());
   std::unique_ptr<Asset::Model> cube_model_ptr = std::make_unique<Asset::CubeModel>(Asset::CubeModel());
+  XMMATRIX quad_model_transform_matrix = XMMatrixIdentity();
+  quad_model_ptr->SetModelTransform(quad_model_transform_matrix);
+  XMMATRIX cube_model_transform_matrix = XMMatrixTranslation(0.0f, 1.0f, 0.0f);
+  cube_model_ptr->SetModelTransform(XMMatrixTranspose(cube_model_transform_matrix));
 
   AssetsManager::GetSharedInstance().InsertModel(std::move(quad_model_ptr));
   AssetsManager::GetSharedInstance().InsertModel(std::move(cube_model_ptr));
@@ -732,9 +742,21 @@ void Scene::UpdateConstantBuffers()
   XMStoreFloat4x4(&scene_constant_buffer_.light_view_proj_transform, light_view_proj_transform_matrix);
 }
 
-void Scene::CommitConstantBuffers()
+void Scene::CommitConstantBuffers(UINT object_index)
 {
-  memcpy(scene_constant_buffer_pointer_, &scene_constant_buffer_, sizeof(scene_constant_buffer_));
+  memcpy(reinterpret_cast<uint8_t*>(scene_constant_buffer_pointers_[current_frame_index_]) + object_index * scene_constant_buffer_aligned_size_, &scene_constant_buffer_, sizeof(scene_constant_buffer_));
+}
+
+void Scene::CommitConstantBuffersForAllObjects()
+{
+  std::vector<AssetsManager::DrawArgument> draw_arguments;
+  AssetsManager::GetSharedInstance().GetModelDrawArguments(draw_arguments);
+  UINT object_index = 0;
+  for (const auto& draw_argument : draw_arguments) {
+    scene_constant_buffer_.model = draw_argument.model_transform;
+    CommitConstantBuffers(object_index);
+    object_index++;
+  }
 }
 
 void Scene::SetCameras()
@@ -780,7 +802,7 @@ void Scene::ShadowPass()
 {
   command_list_->SetPipelineState(shadow_pipeline_state_.Get());
   command_list_->SetGraphicsRootSignature(shadow_root_signature_.Get());
-  command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_view_->GetGPUVirtualAddress());
+  // command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_view_->GetGPUVirtualAddress());
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_cpu_descriptor_handle(dsv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
   command_list_->ClearDepthStencilView(dsv_cpu_descriptor_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
@@ -799,8 +821,12 @@ void Scene::ShadowPass()
 
   std::vector<AssetsManager::DrawArgument> draw_arguments;
   AssetsManager::GetSharedInstance().GetModelDrawArguments(draw_arguments);
+  UINT object_index = 0;
   for (const auto& draw_argument : draw_arguments) {
+    command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_views_[current_frame_index_]->GetGPUVirtualAddress() + object_index * scene_constant_buffer_aligned_size_);
     command_list_->DrawIndexedInstanced(draw_argument.index_count, 1, draw_argument.index_start, draw_argument.vertex_base, 0);
+
+    object_index++;
   }
 }
 
@@ -812,7 +838,7 @@ void Scene::ScenePass()
   command_list_->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
 
   command_list_->SetGraphicsRootSignature(scene_root_signature_.Get());
-  command_list_->SetGraphicsRootConstantBufferView(1, scene_constant_buffer_view_->GetGPUVirtualAddress());
+  // command_list_->SetGraphicsRootConstantBufferView(1, scene_constant_buffer_view_->GetGPUVirtualAddress());
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_cpu_descriptor_handle(rtv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart(), current_frame_index_, rtv_descriptor_increment_size_);
   const FLOAT clear_color[] = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -833,13 +859,17 @@ void Scene::ScenePass()
   AssetsManager::GetSharedInstance().GetModelDrawArguments(draw_arguments);
   const D3D12_GPU_DESCRIPTOR_HANDLE cbv_srv_heap_start = cbv_srv_descriptor_heap_->GetGPUDescriptorHandleForHeapStart();
   command_list_->SetGraphicsRootDescriptorTable(2, cbv_srv_heap_start);
+  UINT object_index = 0;
   for (const auto& draw_argument : draw_arguments) {
     if (draw_argument.diffuse_texture_index >= 0) {
       CD3DX12_GPU_DESCRIPTOR_HANDLE texture_descritptor(cbv_srv_heap_start, kDepthBufferCount_ + draw_argument.diffuse_texture_index, cbv_srv_descriptor_increment_size_);
       command_list_->SetGraphicsRootDescriptorTable(0, texture_descritptor);
     }
 
+    command_list_->SetGraphicsRootConstantBufferView(1, scene_constant_buffer_views_[current_frame_index_]->GetGPUVirtualAddress() + object_index * scene_constant_buffer_aligned_size_);
     command_list_->DrawIndexedInstanced(draw_argument.index_count, 1, draw_argument.index_start, draw_argument.vertex_base, 0);
+
+    object_index++;
   }
 }
 
@@ -848,7 +878,7 @@ void Scene::DrawCameras()
   command_list_->SetPipelineState(camera_draw_pipeline_state_.Get());
   command_list_->SetGraphicsRootSignature(camera_draw_root_signature_.Get());
   // TODO: need to call? yes
-  command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_view_->GetGPUVirtualAddress());
+  command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_views_[current_frame_index_]->GetGPUVirtualAddress());
   
   UpdateVerticesOfCameraPoints();
   

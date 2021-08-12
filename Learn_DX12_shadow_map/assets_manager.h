@@ -13,6 +13,7 @@ class AssetsManager {
      UINT index_start = 0;
      UINT vertex_base = 0;
      int diffuse_texture_index = -1;
+     XMFLOAT4X4 model_transform;
    };
 
   static AssetsManager& GetSharedInstance();

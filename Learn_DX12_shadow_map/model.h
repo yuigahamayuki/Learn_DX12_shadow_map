@@ -40,8 +40,16 @@ class Model {
 
   virtual const std::string GetTextureImageFileName() const = 0;
 
- private:
+  void SetModelTransform(const XMMATRIX& model_transform_matrix) {
+    XMStoreFloat4x4(&model_transform_, model_transform_matrix);
+  }
 
+  XMFLOAT4X4 GetModelTransform() const {
+    return model_transform_;
+  }
+
+ private:
+   XMFLOAT4X4 model_transform_;
 };  // class Model
 
 }  // namespace Asset
