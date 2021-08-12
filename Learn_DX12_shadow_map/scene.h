@@ -26,6 +26,7 @@ struct SceneConstantBuffer {
   XMFLOAT4 light_world_direction_or_position;  // direction: directional_light, position: point light or spot light
   XMFLOAT4 light_color;
   XMFLOAT4 camera_world_pos;
+  XMFLOAT4X4 light_view_proj_transform;
   int light_type;
 };
 
@@ -90,7 +91,6 @@ private:
   // D3D objects
   ComPtr<ID3D12RootSignature> shadow_root_signature_;
   ComPtr<ID3D12PipelineState> shadow_pipeline_state_;
-  ComPtr<ID3D12Resource> shadow_constant_buffer_view_;
   ComPtr<ID3D12RootSignature> scene_root_signature_;
   ComPtr<ID3D12PipelineState> scene_pipeline_state_;
   ComPtr<ID3D12Resource> scene_constant_buffer_view_;
@@ -128,8 +128,6 @@ private:
   std::vector<Camera> cameras_;
   UINT camera_index_ = 0;  // camera index of current viewing camera
 
-  XMFLOAT4X4 light_view_proj_transform_;
-  void* shadow_constant_buffer_pointer_ = nullptr;
   SceneConstantBuffer scene_constant_buffer_;
   void* scene_constant_buffer_pointer_ = nullptr;
 

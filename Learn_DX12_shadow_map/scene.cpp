@@ -358,9 +358,7 @@ void Scene::CreateShadowPipelineState(ID3D12Device* device)
 
 void Scene::CreateAndMapShadowConstantBuffer(ID3D12Device* device)
 {
-  CreateConstanfBuffer(device, sizeof(light_view_proj_transform_), &shadow_constant_buffer_view_, D3D12_RESOURCE_STATE_GENERIC_READ);
-  const CD3DX12_RANGE readRange(0, 0);
-  shadow_constant_buffer_view_->Map(0, &readRange, &shadow_constant_buffer_pointer_);
+  
 }
 
 void Scene::CreateScenePipelineState(ID3D12Device* device)
@@ -385,7 +383,7 @@ void Scene::CreateScenePipelineState(ID3D12Device* device)
   CD3DX12_ROOT_PARAMETER1 root_parameters[3]{};
   // scene constant buffer
   root_parameters[0].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);  // 1 frequently changed diffuse textures - starting in register t0. Per object part.
-  root_parameters[1].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC, D3D12_SHADER_VISIBILITY_ALL);  // 1 frequently changed constant buffer. Per object.
+  root_parameters[1].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC, D3D12_SHADER_VISIBILITY_ALL);  // 1 frequently changed constant buffer, register b0. Per object.
   root_parameters[2].InitAsDescriptorTable(1, &ranges[1], D3D12_SHADER_VISIBILITY_PIXEL);  // 1 infrequently changed shadow texture - starting in register t1.
 
   // static sampler (Note: there is also dynamic sampler)
@@ -731,13 +729,12 @@ void Scene::UpdateConstantBuffers()
   XMMATRIX light_camera_proj_matrix = XMLoadFloat4x4(&light_camera_proj);
   // XMMATRIX light_view_proj_transform_matrix = XMMatrixMultiply(light_camera_view_matrix, light_camera_proj_matrix);  // Note: wrong
   XMMATRIX light_view_proj_transform_matrix = XMMatrixMultiply(light_camera_proj_matrix, light_camera_view_matrix);
-  XMStoreFloat4x4(&light_view_proj_transform_, light_view_proj_transform_matrix);
+  XMStoreFloat4x4(&scene_constant_buffer_.light_view_proj_transform, light_view_proj_transform_matrix);
 }
 
 void Scene::CommitConstantBuffers()
 {
   memcpy(scene_constant_buffer_pointer_, &scene_constant_buffer_, sizeof(scene_constant_buffer_));
-  memcpy(shadow_constant_buffer_pointer_, &light_view_proj_transform_, sizeof(light_view_proj_transform_));
 }
 
 void Scene::SetCameras()
@@ -783,7 +780,7 @@ void Scene::ShadowPass()
 {
   command_list_->SetPipelineState(shadow_pipeline_state_.Get());
   command_list_->SetGraphicsRootSignature(shadow_root_signature_.Get());
-  command_list_->SetGraphicsRootConstantBufferView(0, shadow_constant_buffer_view_->GetGPUVirtualAddress());
+  command_list_->SetGraphicsRootConstantBufferView(0, scene_constant_buffer_view_->GetGPUVirtualAddress());
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_cpu_descriptor_handle(dsv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart());
   command_list_->ClearDepthStencilView(dsv_cpu_descriptor_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
@@ -816,7 +813,6 @@ void Scene::ScenePass()
 
   command_list_->SetGraphicsRootSignature(scene_root_signature_.Get());
   command_list_->SetGraphicsRootConstantBufferView(1, scene_constant_buffer_view_->GetGPUVirtualAddress());
-
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_cpu_descriptor_handle(rtv_descriptor_heap_->GetCPUDescriptorHandleForHeapStart(), current_frame_index_, rtv_descriptor_increment_size_);
   const FLOAT clear_color[] = { 0.0f, 0.0f, 0.0f, 1.0f };

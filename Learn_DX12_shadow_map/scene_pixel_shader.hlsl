@@ -6,6 +6,7 @@ cbuffer SceneConstantBuffer : register(b0)
   float4 light_world_direction_or_position;
   float4 light_color;
   float4 camera_world_pos;
+  float4x4 light_view_proj_transform;
   int light_type;  // 0: directional light; 1: point light; 2: spot light
 };
 
@@ -21,12 +22,27 @@ struct PSInput {
   float3 world_normal : NORMAL;
 };
 
+bool PixelIsInShadow(PSInput ps_input) {
+  float4 light_space_clip_coordinate = mul(float4(ps_input.world_pos, 1.0f), light_view_proj_transform);
+  float4 light_space_ndc_coordinate = light_space_clip_coordinate / light_space_clip_coordinate.w;
+  float2 shadow_map_uv = float2(0.5f * light_space_ndc_coordinate.x + 0.5f, 1.0f - (0.5f * light_space_ndc_coordinate.y + 0.5f));
+  float min_depth = shadow_map.Sample(simple_sampler, shadow_map_uv);
+  float curr_depth = light_space_ndc_coordinate.b;
+  float bias = 0.00003f;
+  return curr_depth > min_depth + bias;
+}
+
 float4 main(PSInput ps_input) : SV_TARGET
 {
   // calculate ambient color
   float3 color = ps_input.color;
   color = diffuse_map.Sample(simple_sampler, ps_input.uv).rgb;
   float3 ambient_color = 0.05f * color;
+
+  float is_in_shadow = PixelIsInShadow(ps_input);
+  if (is_in_shadow) {
+    return float4(ambient_color, 1.0f);
+  }
 
   // calculate diffuse color
   float3 light_world_direction;
