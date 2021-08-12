@@ -28,7 +28,7 @@ bool PixelIsInShadow(PSInput ps_input) {
   float2 shadow_map_uv = float2(0.5f * light_space_ndc_coordinate.x + 0.5f, 1.0f - (0.5f * light_space_ndc_coordinate.y + 0.5f));
   float min_depth = shadow_map.Sample(simple_sampler, shadow_map_uv);
   float curr_depth = light_space_ndc_coordinate.b;
-  float bias = 0.00003f;
+  float bias = 0.00004f;
   return curr_depth > min_depth + bias;
 }
 
